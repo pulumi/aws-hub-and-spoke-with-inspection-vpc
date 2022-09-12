@@ -1,1 +1,1 @@
-# aws-hub-and-spoke-with-traffic-segmentation
+# aws-hub-and-spoke-with-inspection-vpc
