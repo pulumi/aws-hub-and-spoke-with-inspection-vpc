@@ -250,6 +250,7 @@ class SpokeVpc(pulumi.ComponentResource):
             # explicitly to delete the old one before creating a new one:
             pulumi.ResourceOptions(
                 delete_before_replace=True,
+                depends_on=[self.vpc],
                 parent=self,
             )
         )
