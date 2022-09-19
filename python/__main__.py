@@ -99,14 +99,10 @@ def create_verification(
         ),
     )
 
-    try:
-        pulumi.export("spoke_1_http_path_analysis",
-                      spoke_1_verification.http_analysis)
-        pulumi.export("spoke_1_https_path_analysis",
-                      spoke_1_verification.https_analysis)
-        print("DID THE OUTPUTS")
-    except Exception:
-        print("WE HAD AN OOPSIE")
+    pulumi.export("spoke_1_http_path_analysis",
+                  spoke_1_verification.http_analysis)
+    pulumi.export("spoke_1_https_path_analysis",
+                  spoke_1_verification.https_analysis)
 
 
 pulumi.Output.all(hub_vpc.vpc.internet_gateway, spoke_vpc.workload_subnet_ids).apply(
