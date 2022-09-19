@@ -1,17 +1,11 @@
 """A Python Pulumi program"""
 
-from typing import Sequence
-
 import pulumi
 import pulumi_aws as aws
-import pulumi_awsx as awsx
 
-from components import HubVpc, HubVpcArgs, SpokeVpc, SpokeVpcArgs
+from components import HubVpc, HubVpcArgs, SpokeVpc, SpokeVpcArgs, SpokeVerification, SpokeVerificationArgs
 
 project = pulumi.get_project()
-
-# TODO:
-# - Tags
 
 hub_and_spoke_supernet = pulumi.Config().require("hub-and-spoke-supernet")
 
@@ -27,15 +21,16 @@ tgw = aws.ec2transitgateway.TransitGateway(
     )
 )
 
+
 inspection_tgw_route_table = aws.ec2transitgateway.RouteTable(
     "post-inspection-tgw-route-table",
     aws.ec2transitgateway.RouteTableArgs(
         transit_gateway_id=tgw.id,
         tags={
-            "Name": "Post-Inspection Route Table",
+            "Name": "post-inspection",
         }
     ),
-    # Adding the TGW as the parent makes the display of `pulumi up` a little
+    # Adding the TGW as the parent makes the output of `pulumi up` a little
     # easier to understand as it groups these resources visually under the TGW
     # on which they depend.
     opts=pulumi.ResourceOptions(
@@ -49,7 +44,7 @@ spoke_tgw_route_table = aws.ec2transitgateway.RouteTable(
     aws.ec2transitgateway.RouteTableArgs(
         transit_gateway_id=tgw.id,
         tags={
-            "Name": "spoke-tgw-route-table",
+            "Name": "spoke-tgw",
         }
     ),
     opts=pulumi.ResourceOptions(
@@ -91,105 +86,28 @@ spoke_vpc = SpokeVpc(
 )
 
 
-# def add_tgw_resources(
-#     vpc_id: str,
-#     inspection_subnet_ids: Sequence[str],
-#     tgw_subnet_ids: Sequence[str]
-# ):
-#     tgw_attachment = aws.ec2transitgateway.VpcAttachment(
-#         "inspection-gw-vpc-attachment",
-#         aws.ec2transitgateway.VpcAttachmentArgs(
-#             transit_gateway_id=tgw.id,
-#             subnet_ids=tgw_subnet_ids,
-#             vpc_id=vpc_id,
-#             transit_gateway_default_route_table_association=False,
-#             transit_gateway_default_route_table_propagation=False,
-#             appliance_mode_support="enable",
-#         ),
-#         # We can only have one attachment per VPC, so we need to tell Pulumi
-#         # explicitly to delete the old one before creating a new one:
-#         pulumi.ResourceOptions(
-#             delete_before_replace=True,
-#             depends_on=[inspection_vpc],
-#         )
-#     )
+def create_verification(
+    hub_igw,
+    spoke_vpc_workload_subnet_ids,
+):
+    spoke_1_verification = SpokeVerification(
+        "spoke1verification",
+        args=SpokeVerificationArgs(
+            hub_igw_id=hub_igw.id,
+            spoke_instance_subnet_id=spoke_vpc_workload_subnet_ids[0],
+            spoke_vpc_id=spoke_vpc.vpc.vpc_id,
+        ),
+    )
 
-#     aws.ec2transitgateway.Route(
-#         "default-spoke-to-inspection",
-#         aws.ec2transitgateway.RouteArgs(
-#             destination_cidr_block="0.0.0.0/0",
-#             transit_gateway_attachment_id=tgw_attachment.id,
-#             transit_gateway_route_table_id=spoke_tgw_route_table.id,
-#         ),
-#     )
-
-#     aws.ec2transitgateway.RouteTableAssociation(
-#         "inspection-tgw-route-table-assoc",
-#         aws.ec2transitgateway.RouteTableAssociationArgs(
-#             transit_gateway_attachment_id=tgw_attachment.id,
-#             transit_gateway_route_table_id=inspection_tgw_route_table.id,
-#         )
-#     )
-
-#     for subnet_id in inspection_subnet_ids:
-#         route_table = aws.ec2.get_route_table(
-#             subnet_id=subnet_id
-#         )
-
-#         aws.ec2.Route(
-#             f"inspection-tgw-route-{subnet_id}",
-#             aws.ec2.RouteArgs(
-#                 route_table_id=route_table.id,
-#                 destination_cidr_block=hub_and_spoke_supernet,
-#                 transit_gateway_id=tgw.id,
-#             ),
-#             pulumi.ResourceOptions(
-#                 depends_on=[tgw_attachment]
-#             ),
-#         )
+    try:
+        pulumi.export("spoke_1_http_path_analysis",
+                      spoke_1_verification.http_analysis)
+        pulumi.export("spoke_1_https_path_analysis",
+                      spoke_1_verification.https_analysis)
+        print("DID THE OUTPUTS")
+    except Exception:
+        print("WE HAD AN OOPSIE")
 
 
-# inspection_vpc_inspection_subnets = aws.ec2.get_subnets(
-#     filters=[
-#         aws.ec2.GetSubnetFilterArgs(
-#             name="tag:Name",
-#             values=["inspection-vpc-inspection-*"],
-#         ),
-#         aws.ec2.GetSubnetFilterArgs(
-#             name="vpc-id",
-#             values=[inspection_vpc.vpc_id],
-#         ),
-#     ],
-# )
-
-# inspection_vpc_tgw_subnets = aws.ec2.get_subnets(
-#     filters=[
-#         aws.ec2.GetSubnetFilterArgs(
-#             name="tag:Name",
-#             values=["inspection-vpc-tgw-*"],
-#         ),
-#         aws.ec2.GetSubnetFilterArgs(
-#             name="vpc-id",
-#             values=[inspection_vpc.vpc_id],
-#         ),
-#     ]
-# )
-
-# pulumi.Output.all(inspection_vpc.vpc_id, inspection_vpc_inspection_subnets.ids, inspection_vpc_tgw_subnets.ids).apply(
-#     lambda args: add_tgw_resources(args[0], args[1], args[2]))
-
-
-# inspection_vpc.internet_gateway.apply(
-#     lambda igw: create_spoke_vpc(
-#         name="1",
-#         cidr_block="10.0.0.0/16",
-#         tgw_id=tgw.id,
-#         tgw_route_table_id=spoke_tgw_route_table.id,
-#         hub_igw_id=igw.id,
-#     )
-# )
-
-# create_spoke_vpc(
-#     name="2",
-#     cidr_block="10.0.0.0/16"
-# )
+pulumi.Output.all(hub_vpc.vpc.internet_gateway, spoke_vpc.workload_subnet_ids).apply(
+    lambda args: create_verification(args[0], args[1]))
