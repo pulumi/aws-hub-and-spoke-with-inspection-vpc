@@ -1,4 +1,2 @@
 *.pyc
 venv/
-lambda/package
-.build/
