@@ -302,7 +302,7 @@ class SpokeVpc(pulumi.ComponentResource):
         })
 
 
-@ dataclass
+@dataclass
 class SpokeVerificationArgs:
     spoke_vpc_id: pulumi.Input[str]
     spoke_instance_subnet_id: str
