@@ -3,9 +3,8 @@
 import pulumi
 import pulumi_aws as aws
 
-from hub_vpc import HubVpc, HubVpcArgs
-from spoke_vpc import SpokeVpc, SpokeVpcArgs
-from spoke_verification import SpokeVerification, SpokeVerificationArgs
+from hub import HubVpc, HubVpcArgs
+from spoke import SpokeVpc, SpokeVpcArgs, SpokeVerification, SpokeVerificationArgs
 
 project = pulumi.get_project()
 
