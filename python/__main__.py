@@ -8,7 +8,8 @@ from spoke import SpokeVpc, SpokeVpcArgs, SpokeVerification, SpokeVerificationAr
 
 project = pulumi.get_project()
 
-hub_and_spoke_supernet = pulumi.Config().require("hub-and-spoke-supernet")
+config = pulumi.Config()
+hub_and_spoke_supernet = config.require("hub-and-spoke-supernet")
 
 tgw = aws.ec2transitgateway.TransitGateway(
     "tgw",
