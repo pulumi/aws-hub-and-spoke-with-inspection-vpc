@@ -87,30 +87,16 @@ spoke_vpc = SpokeVpc(
     ),
 )
 
+spoke_1_verification = SpokeVerification(
+    "spoke1verification",
+    args=SpokeVerificationArgs(
+        hub_igw_id=hub_vpc.vpc.internet_gateway.id,
+        spoke_instance_subnet_id=spoke_vpc.workload_subnet_ids[0],
+        spoke_vpc_id=spoke_vpc.vpc.vpc_id,
+    ),
+)
 
-def create_verification(
-    hub_igw,
-    spoke_vpc_workload_subnet_ids,
-):
-    return SpokeVerification(
-        "spoke1verification",
-        args=SpokeVerificationArgs(
-            hub_igw_id=hub_igw.id,
-            spoke_instance_subnet_id=spoke_vpc_workload_subnet_ids[0],
-            spoke_vpc_id=spoke_vpc.vpc.vpc_id,
-        ),
-    )
-
-
-spoke_1_verification = pulumi.Output.all(hub_vpc.vpc.internet_gateway, spoke_vpc.workload_subnet_ids).apply(
-    lambda args: create_verification(args[0], args[1]))
-
-# If these are uncommented, spoke_vpc_workload_subnet_ids will be empty and
-# preview will throw an exception because the index [0] is out of range. I
-# believe this is because inside SpokeVpc, we're evaluating get_subnets before
-# the VPC is created, but I cannot figure out a way to execute get_subnets only
-# after a VPC component is fully initialized.
-# pulumi.export("spoke_1_http_path_analysis",
-#               spoke_1_verification.http_analysis)
-# pulumi.export("spoke_1_https_path_analysis",
-#               spoke_1_verification.https_analysis)
+pulumi.export(
+    "spoke_1_http_path_analysis",
+    spoke_1_verification.http_analysis
+)

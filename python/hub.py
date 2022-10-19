@@ -20,6 +20,7 @@ class HubVpc(pulumi.ComponentResource):
         super().__init__("awsAdvancedNetworkingWorkshop:index:HubVpc", name, None, opts)
 
         # So we can reference later in our apply handler:
+        self._name = name
         self._args = args
 
         self.vpc = awsx.ec2.Vpc(
@@ -41,7 +42,11 @@ class HubVpc(pulumi.ComponentResource):
                         cidr_mask=28,
                         name="tgw"
                     ),
-                ]
+                ],
+                # TODO: Uncomment this before commiting. Done to shorten the feedback loop.
+                nat_gateways=awsx.ec2.NatGatewayConfigurationArgs(
+                    strategy=awsx.ec2.NatGatewayStrategy.SINGLE
+                )
             ),
             opts=pulumi.ResourceOptions(
                 *(opts or {}),
@@ -49,7 +54,7 @@ class HubVpc(pulumi.ComponentResource):
             ),
         )
 
-        tgw_subnets = aws.ec2.get_subnets(
+        tgw_subnets = aws.ec2.get_subnets_output(
             filters=[
                 aws.ec2.GetSubnetFilterArgs(
                     name="tag:Name",
@@ -62,34 +67,13 @@ class HubVpc(pulumi.ComponentResource):
             ]
         )
 
-        inspection_subnets = aws.ec2.get_subnets(
-            filters=[
-                aws.ec2.GetSubnetFilterArgs(
-                    name="tag:Name",
-                    values=[f"{name}-vpc-inspection-*"],
-                ),
-                aws.ec2.GetSubnetFilterArgs(
-                    name="vpc-id",
-                    values=[self.vpc.vpc_id],
-                ),
-            ],
-        )
-
-        pulumi.Output.all(self.vpc.vpc_id, inspection_subnets.ids, tgw_subnets.ids).apply(
-            lambda args: self._add_tgw_resources(args[0], args[1], args[2]))
-
-    def _add_tgw_resources(
-        self,
-        vpc_id: str,
-        inspection_subnet_ids: Sequence[str],
-        tgw_subnet_ids: Sequence[str],
-    ):
         self.tgw_attachment = aws.ec2transitgateway.VpcAttachment(
-            f"{self._name}-tgw-vpc-attachment",
+            f"{name}-tgw-vpc-attachment",
             aws.ec2transitgateway.VpcAttachmentArgs(
                 transit_gateway_id=self._args.tgw_id,
-                subnet_ids=tgw_subnet_ids,
-                vpc_id=vpc_id,
+                # subnet_ids=tgw_subnets.ids,
+                subnet_ids=tgw_subnets.apply(lambda x: x.ids),
+                vpc_id=self.vpc.vpc_id,
                 transit_gateway_default_route_table_association=False,
                 transit_gateway_default_route_table_propagation=False,
                 appliance_mode_support="enable",
@@ -104,11 +88,11 @@ class HubVpc(pulumi.ComponentResource):
         )
 
         aws.ec2transitgateway.Route(
-            f"{self._name}-default-spoke-to-inspection",
+            f"{name}-default-spoke-to-inspection",
             aws.ec2transitgateway.RouteArgs(
                 destination_cidr_block="0.0.0.0/0",
                 transit_gateway_attachment_id=self.tgw_attachment.id,
-                transit_gateway_route_table_id=self._args.spoke_tgw_route_table_id,
+                transit_gateway_route_table_id=args.spoke_tgw_route_table_id,
             ),
             opts=pulumi.ResourceOptions(
                 parent=self,
@@ -116,16 +100,37 @@ class HubVpc(pulumi.ComponentResource):
         )
 
         aws.ec2transitgateway.RouteTableAssociation(
-            f"{self._name}-tgw-route-table-assoc",
+            f"{name}-tgw-route-table-assoc",
             aws.ec2transitgateway.RouteTableAssociationArgs(
                 transit_gateway_attachment_id=self.tgw_attachment.id,
-                transit_gateway_route_table_id=self._args.hub_tgw_route_table_id,
+                transit_gateway_route_table_id=args.hub_tgw_route_table_id,
             ),
             pulumi.ResourceOptions(
                 parent=self
             ),
         )
 
+        inspection_subnets = aws.ec2.get_subnets_output(
+            filters=[
+                aws.ec2.GetSubnetFilterArgs(
+                    name="tag:Name",
+                    values=[f"{name}-vpc-inspection-*"],
+                ),
+                aws.ec2.GetSubnetFilterArgs(
+                    name="vpc-id",
+                    values=[self.vpc.vpc_id],
+                ),
+            ],
+        )
+
+        inspection_subnets.apply(lambda x: self._create_routes(x.ids))
+
+        self.register_outputs({
+            "vpc": self.vpc,
+            "tgw_attachment": self.tgw_attachment,
+        })
+
+    def _create_routes(self, inspection_subnet_ids: Sequence[str]):
         for subnet_id in inspection_subnet_ids:
             route_table = aws.ec2.get_route_table(
                 subnet_id=subnet_id
@@ -143,8 +148,3 @@ class HubVpc(pulumi.ComponentResource):
                     parent=self,
                 ),
             )
-
-        self.register_outputs({
-            "vpc": self.vpc,
-            "tgw_attachment": self.tgw_attachment,
-        })

@@ -179,9 +179,65 @@ class SpokeVpc(pulumi.ComponentResource):
             )
         )
 
+        tgw_subnets = aws.ec2.get_subnets_output(
+            filters=[
+                aws.ec2.GetSubnetFilterArgs(
+                    name="tag:Name",
+                    values=[f"{self._name}-vpc-tgw-*"],
+                ),
+                aws.ec2.GetSubnetFilterArgs(
+                    name="vpc-id",
+                    values=[self.vpc.vpc_id],
+                ),
+            ]
+        )
+
+        self.tgw_attachment = aws.ec2transitgateway.VpcAttachment(
+            f"{name}-tgw-vpc-attachment",
+            aws.ec2transitgateway.VpcAttachmentArgs(
+                transit_gateway_id=args.tgw_id,
+                subnet_ids=tgw_subnets.apply(lambda x: x.ids),
+                vpc_id=self.vpc.vpc_id,
+                transit_gateway_default_route_table_association=False,
+                transit_gateway_default_route_table_propagation=False,
+                tags={
+                    "Name": f"{name}-tgw-vpc-attachment",
+                },
+            ),
+            # We can only have one attachment per VPC, so we need to tell Pulumi
+            # explicitly to delete the old one before creating a new one:
+            pulumi.ResourceOptions(
+                delete_before_replace=True,
+                depends_on=[self.vpc],
+                parent=self,
+            )
+        )
+
+        aws.ec2transitgateway.RouteTableAssociation(
+            f"{name}-tgw-route-table-assoc",
+            aws.ec2transitgateway.RouteTableAssociationArgs(
+                transit_gateway_attachment_id=self.tgw_attachment.id,
+                transit_gateway_route_table_id=self._args.tgw_route_table_id,
+            ),
+            pulumi.ResourceOptions(
+                parent=self,
+            )
+        )
+
+        aws.ec2transitgateway.RouteTablePropagation(
+            f"{name}-tgw-route-table-propagation",
+            aws.ec2transitgateway.RouteTablePropagationArgs(
+                transit_gateway_attachment_id=self.tgw_attachment.id,
+                transit_gateway_route_table_id=self._args.tgw_route_table_id,
+            ),
+            pulumi.ResourceOptions(
+                parent=self,
+            ),
+        )
+
         # Using get_subnets rather than vpc.isolated_subnet_ids because it's more
         # stable (in case we change the subnet type above) and descriptive:
-        private_subnets = aws.ec2.get_subnets(
+        private_subnets = aws.ec2.get_subnets_output(
             filters=[
                 aws.ec2.GetSubnetFilterArgs(
                     name="tag:Name",
@@ -195,70 +251,15 @@ class SpokeVpc(pulumi.ComponentResource):
         )
         self.workload_subnet_ids = private_subnets.ids
 
-        tgw_subnets = aws.ec2.get_subnets(
-            filters=[
-                aws.ec2.GetSubnetFilterArgs(
-                    name="tag:Name",
-                    values=[f"{self._name}-vpc-tgw-*"],
-                ),
-                aws.ec2.GetSubnetFilterArgs(
-                    name="vpc-id",
-                    values=[self.vpc.vpc_id],
-                ),
-            ]
-        )
+        private_subnets.apply(lambda x: self._create_routes(x.ids))
 
-        pulumi.Output.all(self.vpc.vpc_id, private_subnets.ids, tgw_subnets.ids).apply(
-            lambda args: self._create_tgw_attachment_resources(args[0], args[1], args[2]))
+        # pulumi.Output.all(self.vpc.vpc_id, private_subnets.ids, tgw_subnets.ids).apply(
+        #     lambda args: self._create_tgw_attachment_resources(args[0], args[1], args[2]))
 
-    def _create_tgw_attachment_resources(
+    def _create_routes(
         self,
-        vpc_id: str,
         private_subnet_ids: Sequence[str],
-        tgw_subnet_ids: Sequence[str],
     ):
-        tgw_attachment = aws.ec2transitgateway.VpcAttachment(
-            f"{self._name}-tgw-vpc-attachment",
-            aws.ec2transitgateway.VpcAttachmentArgs(
-                transit_gateway_id=self._args.tgw_id,
-                subnet_ids=tgw_subnet_ids,
-                vpc_id=vpc_id,
-                transit_gateway_default_route_table_association=False,
-                transit_gateway_default_route_table_propagation=False,
-                tags={
-                    "Name": f"{self._name}-tgw-vpc-attachment",
-                },
-            ),
-            # We can only have one attachment per VPC, so we need to tell Pulumi
-            # explicitly to delete the old one before creating a new one:
-            pulumi.ResourceOptions(
-                delete_before_replace=True,
-                depends_on=[self.vpc],
-                parent=self,
-            )
-        )
-
-        aws.ec2transitgateway.RouteTableAssociation(
-            f"{self._name}-tgw-route-table-assoc",
-            aws.ec2transitgateway.RouteTableAssociationArgs(
-                transit_gateway_attachment_id=tgw_attachment.id,
-                transit_gateway_route_table_id=self._args.tgw_route_table_id,
-            ),
-            pulumi.ResourceOptions(
-                parent=self,
-            )
-        )
-
-        aws.ec2transitgateway.RouteTablePropagation(
-            f"{self._name}-tgw-route-table-propagation",
-            aws.ec2transitgateway.RouteTablePropagationArgs(
-                transit_gateway_attachment_id=tgw_attachment.id,
-                transit_gateway_route_table_id=self._args.tgw_route_table_id,
-            ),
-            pulumi.ResourceOptions(
-                parent=self,
-            ),
-        )
 
         for subnet_id in private_subnet_ids:
             route_table = aws.ec2.get_route_table(
@@ -274,7 +275,7 @@ class SpokeVpc(pulumi.ComponentResource):
                     transit_gateway_id=self._args.tgw_id,
                 ),
                 pulumi.ResourceOptions(
-                    depends_on=[tgw_attachment],
+                    depends_on=[self.tgw_attachment],
                     parent=self,
                 ),
             )
