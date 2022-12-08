@@ -125,6 +125,7 @@ class HubVpc(pulumi.ComponentResource):
 
         inspection_subnets.apply(lambda x: self._create_routes(x.ids))
 
+
         self.register_outputs({
             "vpc": self.vpc,
             "tgw_attachment": self.tgw_attachment,

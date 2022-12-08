@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Sequence
 
+import json
+
 import pulumi
 import pulumi_aws as aws
 import pulumi_awsx as awsx
@@ -27,23 +29,61 @@ class SpokeVerification(pulumi.ComponentResource):
                 egress=[
                     aws.ec2.SecurityGroupEgressArgs(
                         cidr_blocks=["0.0.0.0/0"],
-                        description="Allow outbound HTTP to any destination",
-                        from_port=80,
-                        to_port=80,
-                        protocol="tcp",
+                        description="Allow everything",
+                        protocol="-1",
+                        from_port=0,
+                        to_port=0
                     ),
-                    aws.ec2.SecurityGroupEgressArgs(
-                        cidr_blocks=["0.0.0.0/0"],
-                        description="Allow outbound HTTPs to any destination",
-                        from_port=443,
-                        to_port=443,
-                        protocol="tcp",
-                    ),
+                    # aws.ec2.SecurityGroupEgressArgs(
+                    #     cidr_blocks=["0.0.0.0/0"],
+                    #     description="Allow outbound HTTP to any destination",
+                    #     from_port=80,
+                    #     to_port=80,
+                    #     protocol="tcp",
+                    # ),
+                    # aws.ec2.SecurityGroupEgressArgs(
+                    #     cidr_blocks=["0.0.0.0/0"],
+                    #     description="Allow outbound HTTPs to any destination",
+                    #     from_port=443,
+                    #     to_port=443,
+                    #     protocol="tcp",
+                    # ),
                 ]
             ),
             opts=pulumi.ResourceOptions(
                 parent=self
             ),
+        )
+
+        ec2_role = aws.iam.Role(
+            f"{name}-instance-role",
+            aws.iam.RoleArgs(
+                assume_role_policy=json.dumps({
+                    "Version": "2012-10-17",
+                    "Statement": {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": "ec2.amazonaws.com",
+                        },
+                        "Action": "sts:AssumeRole",
+                    },
+                })
+            )
+        )
+
+        aws.iam.RolePolicyAttachment(
+            f"{name}-role-policy-attachment",
+            aws.iam.RolePolicyAttachmentArgs(
+                role=ec2_role.name,
+                policy_arn="arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+            )
+        )
+
+        instance_profile = aws.iam.InstanceProfile(
+            f"{name}-instance-profile",
+            aws.iam.InstanceProfileArgs(
+                role=ec2_role.name,
+            )
         )
 
         amazon_linux_2 = aws.ec2.get_ami(
@@ -52,7 +92,7 @@ class SpokeVerification(pulumi.ComponentResource):
             filters=[
                 aws.ec2.GetAmiFilterArgs(
                     name="name",
-                    values=["amzn-ami-hvm-*-x86_64-gp2"],
+                    values=["amzn2-ami-hvm-*-x86_64-gp2"],
                 ),
                 aws.ec2.GetAmiFilterArgs(
                     name="owner-alias",
@@ -65,12 +105,13 @@ class SpokeVerification(pulumi.ComponentResource):
             f"{name}-instance",
             aws.ec2.InstanceArgs(
                 ami=amazon_linux_2.id,
-                instance_type="t2.micro",
+                instance_type="t3.micro",
                 vpc_security_group_ids=[sg.id],
                 subnet_id=args.spoke_instance_subnet_id,
                 tags={
                     "Name": f"{name}-instance",
-                }
+                },
+                iam_instance_profile=instance_profile.name,
             ),
             opts=pulumi.ResourceOptions(
                 parent=self
@@ -252,9 +293,6 @@ class SpokeVpc(pulumi.ComponentResource):
         self.workload_subnet_ids = private_subnets.ids
 
         private_subnets.apply(lambda x: self._create_routes(x.ids))
-
-        # pulumi.Output.all(self.vpc.vpc_id, private_subnets.ids, tgw_subnets.ids).apply(
-        #     lambda args: self._create_tgw_attachment_resources(args[0], args[1], args[2]))
 
     def _create_routes(
         self,
