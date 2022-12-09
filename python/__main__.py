@@ -4,7 +4,8 @@ import pulumi
 import pulumi_aws as aws
 
 from hub import HubVpc, HubVpcArgs
-from spoke import SpokeVpc, SpokeVpcArgs, SpokeVerification, SpokeVerificationArgs
+from spoke import SpokeVpc, SpokeVpcArgs
+from spoke_workload import SpokeWorkload, SpokeWorkloadArgs
 
 project = pulumi.get_project()
 
@@ -95,13 +96,12 @@ aws.ec2transitgateway.RouteTablePropagation(
     )
 )
 
-spoke_1_verification = SpokeVerification(
-    "spoke1verification",
-    args=SpokeVerificationArgs(
-        hub_igw_id=hub_vpc.vpc.internet_gateway.id,
+spoke_workload = SpokeWorkload(
+    "spoke1",
+    SpokeWorkloadArgs(
         spoke_instance_subnet_id=spoke_vpc.workload_subnet_ids[0],
         spoke_vpc_id=spoke_vpc.vpc.vpc_id,
-    ),
+    )
 )
 
 pulumi.export("nat-gateway-eip", hub_vpc.vpc.eips[0].public_ip)
