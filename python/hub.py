@@ -77,6 +77,9 @@ class HubVpc(pulumi.ComponentResource):
                 transit_gateway_default_route_table_association=False,
                 transit_gateway_default_route_table_propagation=False,
                 appliance_mode_support="enable",
+                tags={
+                    "Name": f"{name}",
+                },
             ),
             # We can only have one attachment per VPC, so we need to tell Pulumi
             # explicitly to delete the old one before creating a new one:
@@ -123,22 +126,27 @@ class HubVpc(pulumi.ComponentResource):
             ],
         )
 
-        inspection_subnets.apply(lambda x: self._create_routes(x.ids))
+        self.vpc.public_subnet_ids.apply(
+            lambda x: self._create_inbound_routes(x))
 
+        inspection_subnets.apply(lambda x: self._create_outbound_routes(x.ids))
 
         self.register_outputs({
             "vpc": self.vpc,
             "tgw_attachment": self.tgw_attachment,
         })
 
-    def _create_routes(self, inspection_subnet_ids: Sequence[str]):
-        for subnet_id in inspection_subnet_ids:
+    def _create_inbound_routes(self, subnet_ids: Sequence[str]):
+        '''Creates routes for the supernet (a CIDR block that encompasses all
+        spoke VPCs) from the public subnets in the hub VPC (where the NAT
+        Gateways for centralized egress live) to the TGW'''
+        for subnet_id in subnet_ids:
             route_table = aws.ec2.get_route_table(
                 subnet_id=subnet_id
             )
 
             aws.ec2.Route(
-                f"{self._name}-tgw-route-{subnet_id}",
+                f"{self._name}-route-{subnet_id}-to-tgw",
                 aws.ec2.RouteArgs(
                     route_table_id=route_table.id,
                     destination_cidr_block=self._args.supernet_cidr_block,

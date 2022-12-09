@@ -119,12 +119,31 @@ class SpokeVerification(pulumi.ComponentResource):
         )
 
         http_path = aws.ec2.NetworkInsightsPath(
-            f"{name}-network-insights-path-http",
+            f"{name}-to-hub-igw-path-http",
             aws.ec2.NetworkInsightsPathArgs(
                 destination=args.hub_igw_id,
                 destination_port=80,
                 source=instance.id,
                 protocol="tcp",
+                tags={
+                    "Name": f"{name}-to-hub-igw-path-http"
+                }
+            ),
+            opts=pulumi.ResourceOptions(
+                parent=self
+            ),
+        )
+
+        aws.ec2.NetworkInsightsPath(
+            f"hub-igw-to-{name}-path-http",
+            aws.ec2.NetworkInsightsPathArgs(
+                source=args.hub_igw_id,
+                destination=instance.id,
+                destination_port=80,
+                protocol="tcp",
+                tags={
+                    "Name": f"hub-igw-to-{name}-path-http"
+                }
             ),
             opts=pulumi.ResourceOptions(
                 parent=self
@@ -216,8 +235,23 @@ class SpokeVpc(pulumi.ComponentResource):
                 ],
                 nat_gateways=awsx.ec2.NatGatewayConfigurationArgs(
                     strategy=awsx.ec2.NatGatewayStrategy.NONE,
-                )
+                ),
+                enable_dns_hostnames=True,
+                enable_dns_support=True,
             )
+        )
+
+        tgw_subnets = aws.ec2.get_subnets_output(
+            filters=[
+                aws.ec2.GetSubnetFilterArgs(
+                    name="tag:Name",
+                    values=[f"{name}-vpc-tgw-*"],
+                ),
+                aws.ec2.GetSubnetFilterArgs(
+                    name="vpc-id",
+                    values=[self.vpc.vpc_id],
+                ),
+            ]
         )
 
         tgw_subnets = aws.ec2.get_subnets_output(
@@ -242,7 +276,7 @@ class SpokeVpc(pulumi.ComponentResource):
                 transit_gateway_default_route_table_association=False,
                 transit_gateway_default_route_table_propagation=False,
                 tags={
-                    "Name": f"{name}-tgw-vpc-attachment",
+                    "Name": f"{name}",
                 },
             ),
             # We can only have one attachment per VPC, so we need to tell Pulumi
@@ -292,7 +326,54 @@ class SpokeVpc(pulumi.ComponentResource):
         )
         self.workload_subnet_ids = private_subnets.ids
 
+        private_subnets.apply(lambda x: self._create_vpc_endpoints(x.ids))
         private_subnets.apply(lambda x: self._create_routes(x.ids))
+
+    def _create_vpc_endpoints(
+        self,
+        subnet_ids: Sequence[str]
+    ):
+        # TODO: Once we get this working, restrict these to inbound HTTPS
+        vpc_endpoint_sg = aws.ec2.SecurityGroup(
+            f"{self._name}-vpc-endpoint-sg",
+            aws.ec2.SecurityGroupArgs(
+                vpc_id=self.vpc.vpc_id,
+                ingress=[
+                    aws.ec2.SecurityGroupEgressArgs(
+                        cidr_blocks=["0.0.0.0/0"],
+                        description="Allow everything",
+                        protocol="-1",
+                        from_port=0,
+                        to_port=0
+                    ),
+                ],
+                egress=[
+                    aws.ec2.SecurityGroupEgressArgs(
+                        cidr_blocks=["0.0.0.0/0"],
+                        description="Allow everything",
+                        protocol="-1",
+                        from_port=0,
+                        to_port=0
+                    ),
+                ]
+            )
+        )
+
+        for service in ["ec2messages", "ssmmessages", "ssm"]:
+            aws.ec2.VpcEndpoint(
+                f"{self._name}-endpoint-{service}",
+                aws.ec2.VpcEndpointArgs(
+                    vpc_id=self.vpc.vpc_id,
+                    service_name=f"com.amazonaws.{aws.config.region}.{service}",
+                    private_dns_enabled=True,
+                    security_group_ids=[vpc_endpoint_sg.id],
+                    vpc_endpoint_type="Interface",
+                    tags={
+                        "Name": f"{self._name}-{service}"
+                    },
+                    subnet_ids=subnet_ids
+                )
+            )
 
     def _create_routes(
         self,

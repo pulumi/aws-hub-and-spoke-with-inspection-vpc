@@ -87,6 +87,14 @@ spoke_vpc = SpokeVpc(
     ),
 )
 
+aws.ec2transitgateway.RouteTablePropagation(
+    "hub-to-spoke1",
+    aws.ec2transitgateway.RouteTablePropagationArgs(
+        transit_gateway_attachment_id=spoke_vpc.tgw_attachment.id,
+        transit_gateway_route_table_id=hub_tgw_route_table.id,
+    )
+)
+
 spoke_1_verification = SpokeVerification(
     "spoke1verification",
     args=SpokeVerificationArgs(
@@ -96,7 +104,4 @@ spoke_1_verification = SpokeVerification(
     ),
 )
 
-pulumi.export(
-    "spoke_1_http_path_analysis",
-    spoke_1_verification.http_analysis
-)
+pulumi.export("nat-gateway-eip", hub_vpc.vpc.eips[0].public_ip)
