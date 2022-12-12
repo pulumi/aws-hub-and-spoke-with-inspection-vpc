@@ -79,7 +79,7 @@ hub_vpc = HubVpc(
     )
 )
 
-spoke_vpc = SpokeVpc(
+spoke1_vpc = SpokeVpc(
     "spoke1",
     SpokeVpcArgs(
         vpc_cidr_block="10.0.0.0/16",
@@ -91,17 +91,17 @@ spoke_vpc = SpokeVpc(
 aws.ec2transitgateway.RouteTablePropagation(
     "hub-to-spoke1",
     aws.ec2transitgateway.RouteTablePropagationArgs(
-        transit_gateway_attachment_id=spoke_vpc.tgw_attachment.id,
+        transit_gateway_attachment_id=spoke1_vpc.tgw_attachment.id,
         transit_gateway_route_table_id=hub_tgw_route_table.id,
     )
 )
 
-spoke_workload = SpokeWorkload(
+spoke1_workload = SpokeWorkload(
     "spoke1",
     SpokeWorkloadArgs(
-        spoke_instance_subnet_id=spoke_vpc.workload_subnet_ids[0],
-        spoke_vpc_id=spoke_vpc.vpc.vpc_id,
+        spoke_instance_subnet_id=spoke1_vpc.workload_subnet_ids[0],
+        spoke_vpc_id=spoke1_vpc.vpc.vpc_id,
     )
 )
 
-pulumi.export("nat-gateway-eip", hub_vpc.vpc.eips[0].public_ip)
+pulumi.export("nat-gateway-eip", hub_vpc.eip.public_ip)
