@@ -69,6 +69,9 @@ class HubVpc(pulumi.ComponentResource):
             aws.ec2.NatGatewayArgs(
                 subnet_id=self.vpc.public_subnet_ids[0],
                 allocation_id=self.eip.allocation_id,
+                tags={
+                    "Name": f"{name}-nat-gateway",
+                }
             ),
             pulumi.ResourceOptions(
                 parent=self
@@ -120,23 +123,23 @@ class HubVpc(pulumi.ComponentResource):
             ),
         )
 
-        self.vpc.isolated_subnet_ids.apply(
-            lambda ids: self.create_nat_routes(ids, self.nat_gateway.id))
-
+        # NOTE: For the purposes of demonstration, we spin up the AWS Firewall
+        # regardless of whether we are using it or not. Comment this out if you
+        # are not using AWS Firewall.
         self.create_firewall()
 
-        pulumi.Output.all(self.firewall.firewall_statuses,
-                          self.vpc.public_subnet_ids).apply(lambda args: self.create_inbound_routes_to_firewall(args[0], args[1]))
+        # NOTE: To route traffic through the firewall, uncomment the call to
+        # create_firewall_routes. To route traffic directly from the TGW to the
+        # NAT Gateway, uncomment the call to create_direct_nat_routes. You may
+        # need to run `pulumi up` with both routes commented to switch between
+        # routing traffic directly/through the firewall because there is an
+        # identical route that cannot be defined twice.
 
-        # These need to be commented out before the call above to
-        # create_inbound_routes_to_firewall can be made. We have conflicting
-        # routes and therefore need to tear down the old before we create the
-        # new.
+        # pulumi.Output.all(self.firewall.firewall_statuses,
+        #                   self.vpc.public_subnet_ids, self.vpc.isolated_subnet_ids).apply(lambda args: self.create_firewall_routes(args[0], args[1], args[2]))
 
-        # self.vpc.public_subnet_ids.apply(
-        #     lambda x: self.create_inbound_routes_to_tgw(x))
-
-        # inspection_subnets.apply(lambda x: self._create_outbound_routes(x.ids))
+        pulumi.Output.all(self.vpc.public_subnet_ids,
+                          self.vpc.isolated_subnet_ids).apply(lambda args: self.create_direct_nat_routes(args[0], args[1]))
 
         self.register_outputs({
             "vpc": self.vpc,
@@ -148,30 +151,11 @@ class HubVpc(pulumi.ComponentResource):
             "tgw_attachment": self.tgw_attachment,
         })
 
-    def create_nat_routes(self, subnet_ids: Sequence[str], nat_gateway_id: pulumi.Output[str]):
-        '''Creates routes from the supplied subnet IDs to the NAT Gateway'''
-        for subnet_id in subnet_ids:
-            route_table = aws.ec2.get_route_table(
-                subnet_id=subnet_id
-            )
-
-            aws.ec2.Route(
-                f"{self.name}-route-{subnet_id}-to-tgw",
-                aws.ec2.RouteArgs(
-                    route_table_id=route_table.id,
-                    destination_cidr_block="0.0.0.0/0",
-                    nat_gateway_id=nat_gateway_id,
-                ),
-                pulumi.ResourceOptions(
-                    parent=self,
-                ),
-            )
-
-    def create_inbound_routes_to_tgw(self, subnet_ids: Sequence[str]):
-        '''Creates routes for the supernet (a CIDR block that encompasses all
-        spoke VPCs) from the public subnets in the hub VPC (where the NAT
-        Gateways for centralized egress live) to the TGW'''
-        for subnet_id in subnet_ids:
+    def create_direct_nat_routes(self, public_subnet_ids: Sequence[str], isolated_subnet_ids: Sequence[str]):
+        # Create routes for the supernet (a CIDR block that encompasses all
+        # spoke VPCs) from the public subnets in the hub VPC (where the NAT
+        # Gateways for centralized egress live) to the TGW.
+        for subnet_id in public_subnet_ids:
             route_table = aws.ec2.get_route_table(
                 subnet_id=subnet_id
             )
@@ -188,6 +172,65 @@ class HubVpc(pulumi.ComponentResource):
                     parent=self,
                 ),
             )
+
+        # Create routes from the TGW subnet to the NAT Gateway.
+        for subnet_id in isolated_subnet_ids:
+            route_table = aws.ec2.get_route_table(
+                subnet_id=subnet_id
+            )
+
+            aws.ec2.Route(
+                f"{self.name}-route-{subnet_id}-to-tgw",
+                aws.ec2.RouteArgs(
+                    route_table_id=route_table.id,
+                    destination_cidr_block="0.0.0.0/0",
+                    nat_gateway_id=self.nat_gateway.id,
+                ),
+                pulumi.ResourceOptions(
+                    parent=self,
+                ),
+            )
+
+    # def create_nat_routes(self, subnet_ids: Sequence[str], nat_gateway_id: pulumi.Output[str]):
+    #     '''Creates routes from the supplied subnet IDs to the NAT Gateway'''
+    #     for subnet_id in subnet_ids:
+    #         route_table = aws.ec2.get_route_table(
+    #             subnet_id=subnet_id
+    #         )
+
+    #         aws.ec2.Route(
+    #             f"{self.name}-route-{subnet_id}-to-tgw",
+    #             aws.ec2.RouteArgs(
+    #                 route_table_id=route_table.id,
+    #                 destination_cidr_block="0.0.0.0/0",
+    #                 nat_gateway_id=nat_gateway_id,
+    #             ),
+    #             pulumi.ResourceOptions(
+    #                 parent=self,
+    #             ),
+    #         )
+
+    # def create_inbound_routes_to_tgw(self, subnet_ids: Sequence[str]):
+    #     '''Creates routes for the supernet (a CIDR block that encompasses all
+    #     spoke VPCs) from the public subnets in the hub VPC (where the NAT
+    #     Gateways for centralized egress live) to the TGW'''
+    #     for subnet_id in subnet_ids:
+    #         route_table = aws.ec2.get_route_table(
+    #             subnet_id=subnet_id
+    #         )
+
+    #         aws.ec2.Route(
+    #             f"{self.name}-route-{subnet_id}-to-tgw",
+    #             aws.ec2.RouteArgs(
+    #                 route_table_id=route_table.id,
+    #                 destination_cidr_block=self.args.supernet_cidr_block,
+    #                 transit_gateway_id=self.args.tgw_id,
+    #             ),
+    #             pulumi.ResourceOptions(
+    #                 depends_on=[self.tgw_attachment],
+    #                 parent=self,
+    #             ),
+    #         )
 
     def create_firewall(self):
         region = aws.config.region
@@ -254,9 +297,6 @@ class HubVpc(pulumi.ComponentResource):
                 ),
             )
 
-            # TODO: Consider whether we should delete this.
-            # This may not be necessary - it's unlikely we would place hosts in
-            # this subnet, much less ones that would need internet access.
             aws.ec2.Route(
                 f"{self.name}-insp-default-to-nat-{i+1}",
                 aws.ec2.RouteArgs(
@@ -284,7 +324,7 @@ class HubVpc(pulumi.ComponentResource):
             ),
         )
 
-    def create_inbound_routes_to_firewall(self, statuses, subnet_ids):
+    def create_firewall_routes(self, statuses, public_subnet_ids, tgw_subnet_ids):
         # Map the output of the Firewall attachments to a structure more
         # suitable structure:
         attachments = []
@@ -296,7 +336,8 @@ class HubVpc(pulumi.ComponentResource):
             }
             attachments.append(attachment)
 
-        for subnet_id in subnet_ids:
+        # Add routes from public subnets to the firewall for incoming packets.
+        for subnet_id in public_subnet_ids:
             subnet = aws.ec2.get_subnet(id=subnet_id)
             route_table = aws.ec2.get_route_table(
                 subnet_id=subnet_id
@@ -314,6 +355,32 @@ class HubVpc(pulumi.ComponentResource):
                 aws.ec2.RouteArgs(
                     route_table_id=route_table.id,
                     destination_cidr_block=self.args.supernet_cidr_block,
+                    vpc_endpoint_id=subnet_attachments[0]["endpoint_id"],
+                ),
+                pulumi.ResourceOptions(
+                    parent=self,
+                ),
+            )
+
+        # Add routes from the TGW subnets to the firewall for outgoing packets.
+        for subnet_id in tgw_subnet_ids:
+            subnet = aws.ec2.get_subnet(id=subnet_id)
+            route_table = aws.ec2.get_route_table(
+                subnet_id=subnet_id
+            )
+
+            # Find the attachment in our availability zone
+            subnet_attachments = [
+                attachment for attachment in attachments if attachment['az'] == subnet.availability_zone]
+            if len(subnet_attachments) != 1:
+                raise Exception(
+                    f"Expected exactly 1 firewall subnet attachment for AZ '{subnet.availability_zone}'. Found {len(subnet_attachments)} instead.")
+
+            aws.ec2.Route(
+                f"{self.name}-{subnet_id}-to-firewall",
+                aws.ec2.RouteArgs(
+                    route_table_id=route_table.id,
+                    destination_cidr_block="0.0.0.0/0",
                     vpc_endpoint_id=subnet_attachments[0]["endpoint_id"],
                 ),
                 pulumi.ResourceOptions(

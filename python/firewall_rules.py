@@ -2,7 +2,69 @@ import pulumi_aws as aws
 import pulumi as pulumi
 
 
-def create_firewall_policy() -> pulumi.Output[str]:
+def create_firewall_policy(supernet_cidr: str) -> pulumi.Output[str]:
+    drop_remote = aws.networkfirewall.RuleGroup(
+        "drop-remote",
+        aws.networkfirewall.RuleGroupArgs(
+            capacity=2,
+            name="drop-remote",
+            type="STATELESS",
+            rule_group={
+                "rules_source": {
+                    "stateless_rules_and_custom_actions": {
+                        "stateless_rules": [{
+                            "priority": 1,
+                            "rule_definition": {
+                                "actions": ["aws:drop"],
+                                "match_attributes": {
+                                    "protocols": [6],
+                                    "sources": [{
+                                        "address_definition": "0.0.0.0/0"
+                                    }],
+                                    "source_ports": [{
+                                        "from_port": 22,
+                                        "to_port": 22,
+                                    }],
+                                    "destinations": [{
+                                        "address_definition": "0.0.0.0/0"
+                                    }],
+                                    "destination_ports": [{
+                                        "from_port": 22,
+                                        "to_port": 22,
+                                    }]
+                                }
+                            }
+                        }]
+                    }
+                }
+            }
+        )
+    )
+
+    allow_icmp = aws.networkfirewall.RuleGroup(
+        "allow-icmp",
+        aws.networkfirewall.RuleGroupArgs(
+            capacity=100,
+            type="STATEFUL",
+            rule_group={
+                "rule_variables": {
+                    "ip_sets": [{
+                        "key": "SUPERNET",
+                        "ip_set": {
+                            "definition": [supernet_cidr]
+                        }
+                    }]
+                },
+                "rules_source": {
+                    "rules_string": 'pass icmp $SUPERNET any -> $SUPERNET any (msg: "Allowing ICMP packets"; sid:2; rev:1;)'
+                },
+                "stateful_rule_options": {
+                    "rule_order": "STRICT_ORDER"
+                },
+            }
+        )
+    )
+
     allow_amazon = aws.networkfirewall.RuleGroup(
         "allow-amazon",
         aws.networkfirewall.RuleGroupArgs(
@@ -32,11 +94,19 @@ def create_firewall_policy() -> pulumi.Output[str]:
                 stateful_engine_options={
                     "rule_order": "STRICT_ORDER"
                 },
+                stateless_rule_group_references=[{
+                    "priority": 10,
+                    "resource_arn": drop_remote.arn
+                }],
                 stateful_rule_group_references=[
-                    aws.networkfirewall.FirewallPolicyFirewallPolicyStatelessRuleGroupReferenceArgs(
-                        priority=10,
-                        resource_arn=allow_amazon.arn,
-                    )
+                    {
+                        "priority": 10,
+                        "resource_arn": allow_icmp.arn,
+                    },
+                    {
+                        "priority": 20,
+                        "resource_arn": allow_amazon.arn,
+                    },
                 ]
             )
         )
