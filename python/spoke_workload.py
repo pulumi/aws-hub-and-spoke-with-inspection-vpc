@@ -22,7 +22,7 @@ class SpokeWorkload(pulumi.ComponentResource):
         sg = aws.ec2.SecurityGroup(
             f"{name}-instance-sg",
             aws.ec2.SecurityGroupArgs(
-                description="Allow outbound HTTP/S to any destination",
+                description="Allow all outbound traffic",
                 vpc_id=args.spoke_vpc_id,
                 egress=[
                     aws.ec2.SecurityGroupEgressArgs(

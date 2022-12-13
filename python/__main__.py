@@ -6,6 +6,7 @@ import pulumi_aws as aws
 from hub import HubVpc, HubVpcArgs
 from spoke import SpokeVpc, SpokeVpcArgs
 from spoke_workload import SpokeWorkload, SpokeWorkloadArgs
+from firewall_rules import create_firewall_policy
 
 project = pulumi.get_project()
 
@@ -68,6 +69,8 @@ hub_tgw_route_table = aws.ec2transitgateway.RouteTable(
     ),
 )
 
+firewall_policy_arn = create_firewall_policy(hub_and_spoke_supernet)
+
 hub_vpc = HubVpc(
     "hub",
     HubVpcArgs(
@@ -76,10 +79,13 @@ hub_vpc = HubVpc(
         tgw_id=tgw.id,
         hub_tgw_route_table_id=hub_tgw_route_table.id,
         spoke_tgw_route_table_id=spoke_tgw_route_table.id,
+        firewall_policy_arn=firewall_policy_arn,
     )
 )
 
-spoke_vpc = SpokeVpc(
+pulumi.export("nat-gateway-eip", hub_vpc.eip.public_ip)
+
+spoke1_vpc = SpokeVpc(
     "spoke1",
     SpokeVpcArgs(
         vpc_cidr_block="10.0.0.0/16",
@@ -91,17 +97,15 @@ spoke_vpc = SpokeVpc(
 aws.ec2transitgateway.RouteTablePropagation(
     "hub-to-spoke1",
     aws.ec2transitgateway.RouteTablePropagationArgs(
-        transit_gateway_attachment_id=spoke_vpc.tgw_attachment.id,
+        transit_gateway_attachment_id=spoke1_vpc.tgw_attachment.id,
         transit_gateway_route_table_id=hub_tgw_route_table.id,
     )
 )
 
-spoke_workload = SpokeWorkload(
+spoke1_workload = SpokeWorkload(
     "spoke1",
     SpokeWorkloadArgs(
-        spoke_instance_subnet_id=spoke_vpc.workload_subnet_ids[0],
-        spoke_vpc_id=spoke_vpc.vpc.vpc_id,
+        spoke_instance_subnet_id=spoke1_vpc.workload_subnet_ids[0],
+        spoke_vpc_id=spoke1_vpc.vpc.vpc_id,
     )
 )
-
-pulumi.export("nat-gateway-eip", hub_vpc.vpc.eips[0].public_ip)

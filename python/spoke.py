@@ -148,7 +148,6 @@ class SpokeVpc(pulumi.ComponentResource):
         self,
         subnet_ids: Sequence[str]
     ):
-        # TODO: Once we get this working, restrict these to inbound HTTPS
         vpc_endpoint_sg = aws.ec2.SecurityGroup(
             f"{self._name}-vpc-endpoint-sg",
             aws.ec2.SecurityGroupArgs(
